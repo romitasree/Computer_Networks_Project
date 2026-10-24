@@ -1,0 +1,11 @@
+{
+  "shared_dir": "../peer1/shared",
+  "cache_dir": "../peer1/cache",
+  "segment_size": 65536,
+  "chunk_size": 1024,
+  "workers": 4,
+  "attempts_per_chunk": 3,
+  "socket_timeout": 5.0,
+  "refresh_interval": 900.0,
+  "max_stalled_refreshes": 3
+}
