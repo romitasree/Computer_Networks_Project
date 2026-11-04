@@ -163,7 +163,11 @@ int config_load_client(
 
     ClientConfig result = {0};
     result.tracker_port = (unsigned short)port;
-    snprintf(result.tracker_ip, sizeof(result.tracker_ip), "%s", fields[1]);
+    size_t ip_length = strlen(fields[1]);
+    if (ip_length >= sizeof(result.tracker_ip)) {
+        return fail(error, error_size, "%s: tracker address is too long", path);
+    }
+    memcpy(result.tracker_ip, fields[1], ip_length + 1);
     result.refresh_seconds = (unsigned int)interval;
 
     *out = result;
