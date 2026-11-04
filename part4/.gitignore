@@ -1,0 +1,6 @@
+build/
+original/
+.DS_Store
+*.o
+*.a
+tests/config-fixture.tmp
