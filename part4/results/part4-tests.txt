@@ -1,0 +1,100 @@
+mkdir -p build
+clang -Iinclude -std=c11 -Wall -Wextra -Werror -c src/config.c -o build/config.o
+clang -Iinclude -std=c11 -Wall -Wextra -Werror -c src/protocol.c -o build/protocol.o
+clang -Iinclude -std=c11 -Wall -Wextra -Werror -c src/protocol_reply.c -o build/protocol_reply.o
+ar rcs build/libpart4.a build/config.o build/protocol.o build/protocol_reply.o
+clang -Iinclude -std=c11 -Wall -Wextra -Werror tests/test_config.c build/libpart4.a -o build/test_config
+clang -Iinclude -std=c11 -Wall -Wextra -Werror tests/test_protocol.c build/libpart4.a -o build/test_protocol
+clang -Iinclude -std=c11 -Wall -Wextra -Werror tests/test_protocol_reply.c build/libpart4.a -o build/test_protocol_reply
+./build/test_config
+PASS: tracker configuration
+PASS: peer 1 configuration
+PASS: peer 2 configuration
+PASS: peer 3 configuration
+PASS: Windows line endings
+PASS: invalid configuration 1 rejected
+PASS: invalid configuration 2 rejected
+PASS: invalid configuration 3 rejected
+PASS: invalid configuration 4 rejected
+PASS: invalid configuration 5 rejected
+PASS: invalid configuration 6 rejected
+PASS: invalid configuration 7 rejected
+PASS: invalid configuration 8 rejected
+PASS: invalid configuration 9 rejected
+PASS: invalid configuration 10 rejected
+PASS: missing configuration file rejected
+All configuration tests passed.
+./build/test_protocol
+PASS: request 1 round trip
+PASS: request 2 round trip
+PASS: request 3 round trip
+PASS: request 4 round trip
+PASS: CREATE field values
+PASS: UPDATE field values
+PASS: manual command and CRLF
+PASS: numeric upper boundaries
+PASS: malformed request 1 rejected
+PASS: malformed request 2 rejected
+PASS: malformed request 3 rejected
+PASS: malformed request 4 rejected
+PASS: malformed request 5 rejected
+PASS: malformed request 6 rejected
+PASS: malformed request 7 rejected
+PASS: malformed request 8 rejected
+PASS: malformed request 9 rejected
+PASS: malformed request 10 rejected
+PASS: malformed request 11 rejected
+PASS: malformed request 12 rejected
+PASS: malformed request 13 rejected
+PASS: malformed request 14 rejected
+PASS: malformed request 15 rejected
+PASS: malformed request 16 rejected
+PASS: malformed request 17 rejected
+PASS: malformed request 18 rejected
+PASS: oversized request rejected
+PASS: output buffer boundaries
+PASS: unsafe formatter fields rejected
+PASS: missing arguments rejected
+All protocol request tests passed.
+./build/test_protocol_reply
+PASS: reply 1 round trip
+PASS: reply 2 round trip
+PASS: reply 3 round trip
+PASS: reply 4 round trip
+PASS: reply 5 round trip
+PASS: reply 6 round trip
+PASS: reply 7 round trip
+PASS: reply 8 round trip
+PASS: reply 9 round trip
+PASS: reply 10 round trip
+PASS: reply 11 round trip
+PASS: reply 12 round trip
+PASS: parsed reply field values
+PASS: Windows line endings
+PASS: malformed reply 1 rejected
+PASS: malformed reply 2 rejected
+PASS: malformed reply 3 rejected
+PASS: malformed reply 4 rejected
+PASS: malformed reply 5 rejected
+PASS: malformed reply 6 rejected
+PASS: malformed reply 7 rejected
+PASS: malformed reply 8 rejected
+PASS: malformed reply 9 rejected
+PASS: malformed reply 10 rejected
+PASS: malformed reply 11 rejected
+PASS: malformed reply 12 rejected
+PASS: malformed reply 13 rejected
+PASS: malformed reply 14 rejected
+PASS: malformed reply 15 rejected
+PASS: malformed reply 16 rejected
+PASS: malformed reply 17 rejected
+PASS: malformed reply 18 rejected
+PASS: malformed reply 19 rejected
+PASS: malformed reply 20 rejected
+PASS: malformed reply 21 rejected
+PASS: malformed reply 22 rejected
+PASS: oversized reply rejected
+PASS: reply buffer boundaries
+PASS: invalid formatter fields rejected
+PASS: missing arguments rejected
+All protocol reply tests passed.
