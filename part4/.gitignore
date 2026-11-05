@@ -3,4 +3,6 @@ original/
 .DS_Store
 *.o
 *.a
+__pycache__/
+*.pyc
 tests/config-fixture.tmp
