@@ -12,7 +12,7 @@ class PeerEntry:
         return f"{self.ip}:{self.port}:{self.start_byte}:{self.end_byte}:{self.timestamp}" #convets peer entry object to text string 
     
 class TrackerFile: #this class will take .tracker file and parse it into a tracker file object
-    def init (self, filename="", filesize=0, description="", md5=""): #these are all the metadata that will be stored in the tracker file 
+    def __init__ (self, filename="", filesize=0, description="", md5=""): #these are all the metadata that will be stored in the tracker file 
         self.filename = filename
         self.filesize = int(filesize)
         self.description = description
@@ -54,4 +54,4 @@ class TrackerFile: #this class will take .tracker file and parse it into a track
             f.write(f"MD5: {self.md5}\n")
             f.write("# list of peers follows next\n")
             for peer in self.peers:
-                f.write(f"{peer.to_string()}\n") #it is writing back to the disk in the same format as it was read in
+                f.write(f"{str(peer)}\n") #it is writing back to the disk in the same format as it was read in

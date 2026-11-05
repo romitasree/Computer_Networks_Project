@@ -1,4 +1,5 @@
 import os
+import hashlib
 from tracker_format import TrackerFile
 
 #List format:
@@ -19,7 +20,7 @@ def handle_list_req(client_socket, torrents_dir="torrents"): #all the .tracker f
 
     for i, track_name in enumerate(track_files, start=1): #looks through each tracker file and find the metadata for it
         filepath = os.path.join(torrents_dir, track_name)
-        tf = TrackerFile.parse(filepath)
+        tf = TrackerFile.parse_file(filepath)
         response += f"<{i} {tf.filename} {tf.filesize} {tf.md5}>\n"
 
     response += "<REP LIST END>\n"
@@ -41,11 +42,10 @@ def handle_get_req(client_socket, filename, torrents_dir="torrents"):
         client_socket.sendall(b"<GET file not found>\n")
         return
 
-    tf = TrackerFile.parse(filepath) #parse the .track file into a TrackerFile object to get the metadata for it
-
     with open(filepath, 'r', encoding='utf-8') as f: #read the file content of the .track file
         file_content = f.read()
 
-    response = f"<REP GET BEGIN>\n{file_content}\n<REP GET END {tf.md5}>\n" #formating the response to send back to the peer that requested the .track file
+    file_md5 = hashlib.md5(file_content.encode('utf-8')).hexdigest()
+    response = f"<REP GET BEGIN>\n{file_content}\n<REP GET END {file_md5}>\n" #formating the response to send back to the peer that requested the .track file
     
     client_socket.sendall(response.encode('utf-8')) #sends the response to the peer that requested the .track file
