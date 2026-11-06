@@ -52,10 +52,13 @@ DEFAULT_CLIENT_TIMEOUT = 10.0     # drop a client that stays silent this long
 MAX_REQUEST_BYTES = 4096          # longest protocol message we accept
 LISTEN_BACKLOG = 128
 MAX_NAME_LEN = 200                # leaves room for ".track" in a 255 limit
+DRAIN_BYTES = 4 * 1024 * 1024     # discard at most this much unread input...
+DRAIN_SECONDS = 3.0               # ...for at most this long (oversized requests)
 
 # One peer line inside a tracker file:  ip:port:start:end:timestamp
 PEER_LINE = re.compile(r"^\s*([A-Za-z0-9._-]+):(\d+):(\d+):(\d+):(\d+)\s*$")
 HOST_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+MD5_RE = re.compile(r"[0-9A-Fa-f]{32}")       # a real MD5 is 32 hex digits
 
 
 class BadRequest(Exception):
@@ -154,11 +157,11 @@ def parse_create(tok):
     filename = check_filename(tok[1])
     filesize = check_number(tok[2], "file size")
     md5 = tok[-3]
-    if len(md5) > 64:
-        raise BadRequest("md5 too long")
+    if not MD5_RE.fullmatch(md5):
+        raise BadRequest("md5 must be 32 hexadecimal characters")
     ip, port = check_endpoint(tok[-2], tok[-1])
     description = " ".join(tok[3:-3]).replace("_", " ")
-    return CreateRequest(filename, filesize, description, md5, ip, port)
+    return CreateRequest(filename, filesize, description, md5.lower(), ip, port)
 
 
 def parse_update(tok):
@@ -216,6 +219,33 @@ def read_request(conn):
     if len(line) > MAX_REQUEST_BYTES:
         raise RequestTooLong
     return line.decode("utf-8", errors="replace").strip() or None
+
+
+def drain(conn, max_bytes=65536, max_seconds=0.2):
+    """Read and throw away whatever the client still has in flight.
+
+    Closing a TCP socket that still holds unread incoming data makes many
+    systems (macOS, Windows, some Linux timings) send a RESET instead of a
+    normal close, and the reset can destroy our reply before the client has
+    read it.  So after replying we shutdown(SHUT_WR) (the client sees our
+    reply followed by end-of-stream) and drain the rest before close().
+    Normal clients close right away, so this returns immediately for them.
+    """
+    deadline = time.monotonic() + max_seconds
+    total = 0
+    while total < max_bytes:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        try:
+            conn.settimeout(left)
+            chunk = conn.recv(65536)
+        except OSError:                 # timeout, reset or closed: stop
+            break
+        if not chunk:                   # client finished sending
+            break
+        total += len(chunk)
+    return total
 
 
 # --------------------------------------------------------------------------
@@ -393,6 +423,11 @@ class TrackerServer:
                 self._count("error")
                 self.log("ERROR", f"{peer_ip}: request longer than "
                                   f"{MAX_REQUEST_BYTES} bytes")
+                try:                    # reply first, then absorb the rest of
+                    conn.shutdown(socket.SHUT_WR)    # the flood so close()
+                except OSError:                      # cannot reset the reply
+                    pass
+                drain(conn, DRAIN_BYTES, DRAIN_SECONDS)
                 return
             if line is None:
                 self.log("IGNORE", f"{peer_ip}: connection with no request")
@@ -409,6 +444,7 @@ class TrackerServer:
                 conn.shutdown(socket.SHUT_WR)   # flush reply before closing
             except OSError:
                 pass
+            drain(conn)                     # never close with unread input
             conn.close()                    # one request per connection
             with self._stats_lock:
                 self._active -= 1
