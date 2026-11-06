@@ -33,10 +33,30 @@ def handle_list_req(client_socket, torrents_dir="torrents"): #all the .tracker f
 #<REP GET END FileMD5>
 
 def handle_get_req(client_socket, filename, torrents_dir="torrents"): 
+
+    #check if the filename is trying to access files outside the torrents folder
+    if (
+        not filename
+        or os.path.basename(filename) != filename
+        or filename in (".", "..")
+        or "\\" in filename
+        or "/" in filename
+    ):
+        client_socket.sendall(b"<GET invalid filename>\n")
+        return
+
     if not filename.endswith('.track'): #makes sure the filename ends with .track
         filename += '.track' #if it doesn't end with .track, it will add .track to the end of it 
 
     filepath = os.path.join(torrents_dir, filename)
+
+    #make sure the file path stays inside the torrents folder
+    safe_dir = os.path.realpath(torrents_dir)
+    safe_path = os.path.realpath(filepath)
+
+    if os.path.commonpath([safe_dir, safe_path]) != safe_dir:
+        client_socket.sendall(b"<GET invalid filename>\n")
+        return
 
     if not os.path.exists(filepath):
         client_socket.sendall(b"<GET file not found>\n")
