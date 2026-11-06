@@ -46,6 +46,6 @@ def handle_get_req(client_socket, filename, torrents_dir="torrents"):
         file_content = f.read()
 
     file_md5 = hashlib.md5(file_content.encode('utf-8')).hexdigest()
-    response = f"<REP GET BEGIN>\n{file_content}\n<REP GET END {file_md5}>\n" #formating the response to send back to the peer that requested the .track file
+    response = f"<REP GET BEGIN>\n{file_content}<REP GET END {file_md5}>\n" #formating the response to send back to the peer that requested the .track file
     
     client_socket.sendall(response.encode('utf-8')) #sends the response to the peer that requested the .track file
