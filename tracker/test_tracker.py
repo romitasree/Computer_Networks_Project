@@ -115,10 +115,30 @@ class CreateTrackerTests(ServerCase):
             f"<createtracker x 5 d {MD5} 1.1.1.1 http>",        # port not a number
             "<createtracker x 5 1.1.1.1 80>",                   # missing md5
             "<createtracker>",
+            "<createtracker x 5 d not-a-hash 1.1.1.1 80>",      # md5 is not a hash
+            f"<createtracker x 5 d {MD5[:-1]} 1.1.1.1 80>",     # 31 hex digits
+            f"<createtracker x 5 d {MD5}0 1.1.1.1 80>",         # 33 hex digits
+            f"<createtracker x 5 d {'g' * 32} 1.1.1.1 80>",     # 32 chars, not hex
+            "<createtracker x 5 d md5 1.1.1.1 80>",
         ]
         for msg in bad:
             self.assertEqual(ask(self.port, msg), "<createtracker fail>\n", msg)
         self.assertEqual(os.listdir(self.dir), [])
+
+    def test_md5_must_be_32_hex_digits(self):
+        """A bad MD5 is refused (peers could not use the tracker file)."""
+        for bad in ("not-a-hash", "abc", MD5[:-1], MD5 + "0", "g" * 32, "0x" + MD5[2:]):
+            r = ask(self.port, f"<createtracker h.bin 10 desc {bad} 1.1.1.1 80>")
+            self.assertEqual(r, "<createtracker fail>\n", bad)
+        self.assertEqual(os.listdir(self.dir), [])            # nothing was created
+        # ...and a bad MD5 with a multi-word description is refused too
+        self.assertEqual(ask(self.port, "<createtracker h.bin 10 two words oops 1.1.1.1 80>"),
+                         "<createtracker fail>\n")
+
+    def test_uppercase_md5_accepted_and_stored_lowercase(self):
+        r = ask(self.port, f"<createtracker h.bin 10 d {MD5.upper()} 1.1.1.1 80>")
+        self.assertEqual(r, "<createtracker succ>\n")
+        self.assertIn(f"MD5: {MD5}\n", self.track("h.bin"))
 
     def test_manual_forms_are_accepted(self):
         """Un-framed, upper-case, CRLF and no-newline commands (manual testing)."""
@@ -273,10 +293,61 @@ class RobustnessTests(ServerCase):
     def test_unknown_command(self):
         self.assertEqual(ask(self.port, "<hello world>"), "<error unknown command>\n")
 
-    def test_oversized_request_rejected_and_server_survives(self):
-        r = ask(self.port, "x" * 10000, raw=True)
+    def test_oversized_request_gets_error_reply_not_a_reset(self):
+        """The error reply must reach the client even if it keeps sending."""
+        for size in (5000, 50_000, 500_000):       # just over the limit ... flood
+            for _ in range(3):
+                with socket.create_connection(("127.0.0.1", self.port), timeout=5) as s:
+                    s.sendall(b"x" * size)          # no newline at all
+                    self.assertEqual(s.recv(200), b"<error request too long>\n", size)
+        self.assertEqual(self.create(), "<createtracker succ>\n")   # server survives
+
+    def test_oversized_line_with_newline_also_rejected(self):
+        r = ask(self.port, "createtracker " + "a" * 6000 + "\n", raw=True)
         self.assertEqual(r, "<error request too long>\n")
-        self.assertEqual(self.create(), "<createtracker succ>\n")
+
+    def test_extra_data_after_the_request_does_not_break_the_reply(self):
+        """Pipelined junk after the newline is absorbed; the reply still arrives."""
+        with socket.create_connection(("127.0.0.1", self.port), timeout=5) as s:
+            s.sendall(b"<REQ LIST>\n" + b"junk" * 20000)
+            data = b""
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+        self.assertEqual(data, b"<REP LIST 0>\n<REP LIST END>\n")
+
+    def test_drain_discards_pending_input(self):
+        """drain() empties the receive buffer so close() cannot send a reset."""
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        a.sendall(b"z" * 100_000)
+        a.shutdown(socket.SHUT_WR)
+        self.assertEqual(tracker.drain(b, 1_000_000, 2.0), 100_000)
+
+    def test_drain_is_bounded(self):
+        """A client that never stops cannot hold the worker forever."""
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+        self.addCleanup(b.close)
+        stop = threading.Event()
+
+        def flood():
+            try:
+                while not stop.is_set():
+                    a.sendall(b"z" * 65536)
+            except OSError:
+                pass
+        t = threading.Thread(target=flood, daemon=True)
+        t.start()
+        began = time.time()
+        tracker.drain(b, 10_000_000_000, 0.5)       # limited by time
+        self.assertLess(time.time() - began, 2.0)
+        stop.set()
+        b.close()
+        t.join(timeout=2)
 
     def test_empty_connection_ignored(self):
         socket.create_connection(("127.0.0.1", self.port)).close()
