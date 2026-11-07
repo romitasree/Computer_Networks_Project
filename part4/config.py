@@ -24,6 +24,7 @@ class PeerServerConfig:
 class TrackerConfig:
     listen_port: int
     tracker_directory: str
+    dead_peer_timeout: int = DEFAULT_REFRESH_SECONDS
 
 
 def _fields(path, count):
@@ -36,7 +37,8 @@ def _fields(path, count):
     while lines and not lines[-1].strip():
         lines.pop()
 
-    if len(lines) != count:
+    allowed = (count,) if isinstance(count, int) else count
+    if len(lines) not in allowed:
         raise ValueError(f"{path}: expected {count} configuration lines")
 
     values = [line.strip() for line in lines]
@@ -85,8 +87,12 @@ def config_load_peer_server(path):
 
 
 def config_load_tracker(path):
-    port, directory = _fields(path, 2)
+    # Match Romita's sconfig: optional third line is dead-peer expiry seconds.
+    fields = _fields(path, (2, 3))
+    port, directory = fields[:2]
     return TrackerConfig(
         _positive(port, 65535, "Tracker port"),
         directory,
+        _positive(fields[2], 4294967295, "Dead-peer timeout")
+        if len(fields) == 3 else DEFAULT_REFRESH_SECONDS,
     )

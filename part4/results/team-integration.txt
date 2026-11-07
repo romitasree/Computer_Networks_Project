@@ -1,0 +1,9 @@
+Testing origin/vikas: 47a7053cff4a037158ab7dfdb359dad83ce8164a
+Testing origin/romita-tracker: e72777343ba15e3cafc8e72007ae479193302f27
+Testing origin/lohita: ab63a2950c04d3b3dcd91046444c0873f403d80f
+test_actual_tracker_downloader_and_partial_upload (test_team.TeamIntegration.test_actual_tracker_downloader_and_partial_upload) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.927s
+
+OK
