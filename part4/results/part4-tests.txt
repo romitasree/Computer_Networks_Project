@@ -1,16 +1,17 @@
-cd .. && python3 -m unittest discover -s part4/tests -p 'test_python.py' -v
-test_crlf_and_whitespace (test_python.ConfigurationTests.test_crlf_and_whitespace) ... ok
-test_invalid_client_settings (test_python.ConfigurationTests.test_invalid_client_settings) ... ok
-test_missing_file_and_invalid_server_settings (test_python.ConfigurationTests.test_missing_file_and_invalid_server_settings) ... ok
-test_supplied_configurations (test_python.ConfigurationTests.test_supplied_configurations) ... ok
-test_invalid_formatter_fields (test_python.ProtocolTests.test_invalid_formatter_fields) ... ok
-test_invalid_replies (test_python.ProtocolTests.test_invalid_replies) ... ok
-test_invalid_requests (test_python.ProtocolTests.test_invalid_requests) ... ok
-test_manual_commands_crlf_and_limits (test_python.ProtocolTests.test_manual_commands_crlf_and_limits) ... ok
-test_reply_formats_and_fields (test_python.ProtocolTests.test_reply_formats_and_fields) ... ok
-test_request_formats_and_fields (test_python.ProtocolTests.test_request_formats_and_fields) ... ok
-
+..........s...Upload rejected from ('127.0.0.1', 51166): Chunk must contain 1 through 1024 bytes
+Upload rejected from ('127.0.0.1', 51168): Chunk must contain 1 through 1024 bytes
+Upload rejected from ('127.0.0.1', 51182): Invalid chunk request
+Upload rejected from ('127.0.0.1', 51190): File is not shared
+Upload rejected from ('127.0.0.1', 51198): Filename must be a basename
+Upload rejected from ('127.0.0.1', 51208): Chunk must contain 1 through 1024 bytes
+Upload rejected from ('127.0.0.1', 51216): Invalid chunk request
+..Upload rejected from ('127.0.0.1', 41694): Seed changed; remove/re-register it before serving
+..Upload rejected from ('127.0.0.1', 40960): Requested bytes are not completed
+..Tracker operation for sample.bin failed; retry next interval: temporary tracker outage
+Tracker operation for sample.bin failed; retry next interval: temporary tracker outage
+Tracker operation for another failed; retry next interval: temporary tracker outage
+.
 ----------------------------------------------------------------------
-Ran 10 tests in 0.004s
+Ran 21 tests in 1.439s
 
-OK
+OK (skipped=1)

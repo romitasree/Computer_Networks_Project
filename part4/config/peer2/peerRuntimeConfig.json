@@ -1,0 +1,8 @@
+{
+  "bind_host": "0.0.0.0",
+  "timeout": 5.0,
+  "workers": 16,
+  "backlog": 64,
+  "max_tracker_response": 4194304,
+  "cache_directory": "cache"
+}
