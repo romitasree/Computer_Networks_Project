@@ -1,4 +1,4 @@
-"""Real local peers and the standalone CLI; no tracker server is substituted into production."""
+"""Run the downloader and standalone CLI against fixture uploaders on localhost."""
 
 import hashlib
 import json
@@ -24,6 +24,7 @@ class IntegrationTests(unittest.TestCase):
         self.request_lock = threading.Lock()
 
     def seed(self, first, last, timestamp):
+        """Start a TCP fixture that only serves its advertised byte range."""
         data, requests, lock = self.data, self.requests, self.request_lock
 
         class Handler(socketserver.StreamRequestHandler):

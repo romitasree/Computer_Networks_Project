@@ -1,6 +1,6 @@
 # Computer Networks Project
 
-## Vikas - Person 3: Peer Downloading
+## Person 3: Peer Downloading
 
 Python 3.9+ on Linux/macOS. No third-party packages are needed.
 
@@ -30,9 +30,11 @@ python3 -m peer_download --config examples/download_config.json --resume-all
 
 The CLI uses the reference chunk transport described in
 [the integration guide](docs/DOWNLOADING.md). It operates from cached tracker
-snapshots. Periodic tracker retrieval and updates are enabled by wiring the
-documented callbacks into the team's peer program.
+snapshots. For live tracker refreshes, progress updates, and serving downloaded
+bytes, connect the downloader to the team's Python peer uploader using the
+[integration example](docs/DOWNLOADING.md#team-integration-api).
 
-The `vikas` work is based on `main`. Lohita's `lohita` branch was inspected for
-compatibility; her source files are not copied or changed here. See the guide
-for the adapter and the remaining integration points.
+The [midterm demo checklist](docs/DOWNLOADING.md#midterm-demo-checklist) shows
+how to capture evidence of a transfer between two machines and how to run the
+focused concurrency test. The localhost tests provide repeatable checks;
+the demo checklist covers a transfer using two separate machines.

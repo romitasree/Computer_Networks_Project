@@ -1,4 +1,10 @@
-"""Download scheduling and durable segment records, independent of tracker sockets."""
+"""Coordinate one file download without owning the tracker or upload server.
+
+Workers fetch disjoint segments in memory. The coordinating thread writes
+those segments at their file offsets, saves the resume record, and reports
+availability. Keeping writes on one thread makes the checkpoint order clear:
+bytes reach disk before they can be recorded or advertised as complete.
+"""
 
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -32,6 +38,12 @@ class IntegrityError(DownloadError):
 
 @dataclass(frozen=True)
 class DownloadConfig:
+    """Limit worker count, request size, retries, and tracker refresh timing.
+
+    Sizes are in bytes and timeouts are in seconds. A segment is a checkpoint
+    unit; a chunk is a single network request within that segment.
+    """
+
     segment_size: int = 65536
     chunk_size: int = MAX_CHUNK_SIZE
     workers: int = 4
@@ -56,6 +68,7 @@ class DownloadConfig:
 
 
 def _digest(path: Path, algorithm: str = "md5") -> str:
+    """Hash a file in blocks so verification does not load it all into memory."""
     checksum = hashlib.new(algorithm)
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
@@ -89,6 +102,8 @@ class Downloader:
         self.refresh_tracker = refresh_tracker
         self.report_segment = report_segment
         self.cancel = cancel or threading.Event()
+        # Worker peer selections and uploader availability reads use this
+        # lock; the coordinating thread alone writes data and checkpoints.
         self._lock = threading.RLock()
         self._active_peers: Dict[Tuple[str, int], int] = {}
         self._completed: Dict[int, str] = {}
@@ -101,16 +116,18 @@ class Downloader:
         self.segment_count = (info.filesize + self.config.segment_size - 1) // self.config.segment_size
 
     def _bounds(self, index: int) -> Tuple[int, int]:
+        """Translate a segment index into [start, end), clipping the tail."""
         start = index * self.config.segment_size
         return start, min(start + self.config.segment_size, self.info.filesize)
 
     def completed_ranges(self) -> Tuple[Tuple[int, int], ...]:
-        """Only fully downloaded, durable segments may be served/advertised."""
+        """Return sorted, durable segment ranges; adjacent ranges stay separate."""
         with self._lock:
             return tuple(self._bounds(i) for i in sorted(self._completed))
 
     @contextmanager
     def _file_lock(self):
+        """Reserve this file for one process sharing the same peer cache."""
         # Keep the lock file: unlinking it can let concurrent processes lock
         # different inodes. flock automatically releases on process failure.
         with (self.cache_dir / (self.info.filename + ".download.lock")).open("a") as stream:
@@ -124,6 +141,7 @@ class Downloader:
                 fcntl.flock(stream, fcntl.LOCK_UN)
 
     def _save_state(self) -> None:
+        """Replace the checkpoint atomically so a restart sees a complete record."""
         state = {"version": 1, "filename": self.info.filename, "filesize": self.info.filesize,
                  "md5": self.info.md5, "segment_size": self.config.segment_size,
                  "completed": {str(k): v for k, v in self._completed.items()}}
@@ -141,6 +159,7 @@ class Downloader:
                 temporary.unlink(missing_ok=True)
 
     def _restore(self) -> None:
+        """Restore only recorded segments whose saved bytes still match their hashes."""
         self._completed = {}
         if self.state_path.exists():
             try:
@@ -153,6 +172,8 @@ class Downloader:
                 if not isinstance(records, dict):
                     raise ValueError("invalid completed records")
                 if self.part_path.exists():
+                    # The preallocated file may contain holes or stale bytes;
+                    # its size alone cannot prove that any segment is usable.
                     with self.part_path.open("rb") as stream:
                         for key, checksum in records.items():
                             index = int(key)
@@ -177,6 +198,7 @@ class Downloader:
         self._save_state()
 
     def _report(self, start: int, end: int) -> None:
+        """Notify the caller without losing saved progress on a tracker error."""
         if self.report_segment is not None:
             try:
                 self.report_segment(self.info.filename, start, end)
@@ -185,10 +207,12 @@ class Downloader:
                             self.info.filename, start, end, exc_info=True)
 
     def _advertise_completed(self) -> None:
+        """Replay completed segments on resume and during tracker refreshes."""
         for start, end in self.completed_ranges():
             self._report(start, end)
 
     def _refresh(self) -> None:
+        """Refresh source peers while preserving the file identity used by checkpoints."""
         if self.refresh_tracker is not None:
             try:
                 updated = self.refresh_tracker(self.info.filename)
@@ -202,6 +226,7 @@ class Downloader:
         self._advertise_completed()
 
     def _choose_peer(self, position: int, excluded: set) -> Optional[Peer]:
+        """Reserve one source for the requested offset; the worker releases it."""
         # Prefer the newest peer that is not already busy. This lets concurrent
         # workers use distinct peers where possible without waiting on a seed.
         with self._lock:
@@ -215,6 +240,7 @@ class Downloader:
             return peer
 
     def _fetch_segment(self, index: int) -> bytes:
+        """Assemble one complete segment on a worker, without writing to disk."""
         start, end = self._bounds(index)
         result = bytearray()
         while start + len(result) < end:
@@ -234,6 +260,8 @@ class Downloader:
                     peer = self._choose_peer(position, excluded)
                 if peer is None:
                     raise DownloadError(f"no peer has byte {position}")
+                # A peer can own only part of this segment. Stop at its
+                # advertised end and choose a source again for the next byte.
                 chunk_end = min(position + self.config.chunk_size, end, peer.end_byte)
                 try:
                     data = self.fetch_chunk(peer, self.info.filename, position, chunk_end)
@@ -256,6 +284,7 @@ class Downloader:
         return bytes(result)
 
     def _commit_segment(self, stream, index: int, data: bytes) -> None:
+        """Write a worker result, record its hash, then notify the tracker adapter."""
         start, end = self._bounds(index)
         if len(data) != end - start:
             raise DownloadError("worker returned an incomplete segment")
@@ -270,6 +299,7 @@ class Downloader:
         self._report(start, end)
 
     def _download_missing(self) -> None:
+        """Schedule missing segments and checkpoint successful futures in one thread."""
         pending = deque(i for i in range(self.segment_count) if i not in self._completed)
         futures = {}
         failures = {}
@@ -288,6 +318,8 @@ class Downloader:
                         last_progress = len(self._completed)
                         next_refresh = time.monotonic() + self.config.refresh_interval
                         if not pending and not futures:
+                            # Retry gaps only after the previous pass drains;
+                            # an in-flight segment must never be queued twice.
                             if stalled >= self.config.max_stalled_refreshes:
                                 raise DownloadError("no download progress after tracker refreshes")
                             pending.extend(i for i in range(self.segment_count) if i not in self._completed)
@@ -317,6 +349,7 @@ class Downloader:
                     future.cancel()
 
     def _cleanup(self) -> None:
+        """Remove this file's resume metadata after the final file is available."""
         self.state_path.unlink(missing_ok=True)
         self.tracker_path.unlink(missing_ok=True)
 

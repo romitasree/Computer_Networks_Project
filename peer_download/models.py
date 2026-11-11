@@ -7,7 +7,7 @@ from typing import Any, Tuple
 
 
 def safe_filename(name: str) -> str:
-    """Only one protocol-safe path component may come from a tracker."""
+    """Require one basename that fits both local paths and the chunk protocol."""
     if (not name or name in {".", ".."} or any(c in name for c in '/\\<>:')
             or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in name)):
         raise ValueError("filename must be a single name without whitespace or protocol delimiters")
@@ -16,6 +16,8 @@ def safe_filename(name: str) -> str:
 
 @dataclass(frozen=True)
 class Peer:
+    """One advertised byte range at a peer endpoint and its tracker timestamp."""
+
     ip: str
     port: int
     start_byte: int
@@ -30,11 +32,14 @@ class Peer:
 
     @property
     def endpoint(self) -> Tuple[str, int]:
+        """Return the socket address and the key used to track worker load."""
         return self.ip, self.port
 
 
 @dataclass(frozen=True)
 class FileInfo:
+    """The file's expected size and MD5 plus the current peer snapshot."""
+
     filename: str
     filesize: int
     md5: str
@@ -51,7 +56,7 @@ class FileInfo:
 
     @classmethod
     def from_tracker(cls, tracker: Any) -> "FileInfo":
-        """Adapt Person 4's parsed object (including lohita's TrackerFile)."""
+        """Copy parsed metadata from the tracker client's TrackerFile object."""
         return cls(str(tracker.filename), int(tracker.filesize), str(tracker.md5), tuple(
             Peer(str(p.ip), int(p.port), int(p.start_byte), int(p.end_byte), int(p.timestamp))
             for p in tracker.peers
@@ -61,8 +66,8 @@ class FileInfo:
     def from_cache(cls, path: Path) -> "FileInfo":
         """Read a previously verified, raw .track file for CLI/restart recovery.
 
-        Tracker response framing/checksum verification belongs to Person 4.
-        This loader never accepts <REP GET ...> wrappers as tracker contents.
+        The tracker client verifies the reply payload before caching it. This
+        loader expects the tracker body without the <REP GET ...> framing.
         """
         fields = {}
         peers = []
@@ -87,4 +92,5 @@ class FileInfo:
 
     @property
     def identity(self) -> Tuple[str, int, str]:
+        """Keep the same file version even if a refresh replaces the peer list."""
         return self.filename, self.filesize, self.md5

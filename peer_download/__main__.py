@@ -12,6 +12,7 @@ from . import DownloadConfig, DownloadError, Downloader, FileInfo
 
 
 def main() -> int:
+    """Run from cached tracker snapshots; return 0, 1 on error, or 130 on cancellation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, type=Path, help="downloader JSON configuration")
     parser.add_argument("--tracker", type=Path, help="one verified raw .track file in cache_dir")
@@ -20,6 +21,7 @@ def main() -> int:
     if bool(args.tracker) == args.resume_all:
         parser.error("choose exactly one of --tracker or --resume-all")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # Request cooperative shutdown so completed segments stay resumable.
     cancelled = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: cancelled.set())
     signal.signal(signal.SIGTERM, lambda *_: cancelled.set())
@@ -44,6 +46,8 @@ def main() -> int:
             try:
                 info = FileInfo.from_cache(tracker)
                 expected = cache / (info.filename + ".track")
+                # Keep the input path consistent with the downloader's cache
+                # naming so a completed download removes the right tracker.
                 if tracker.resolve() != expected.resolve():
                     raise ValueError("tracker must be cache_dir/<filename>.track")
                 Downloader(info, shared, cache, config=config, cancel=cancelled).download()

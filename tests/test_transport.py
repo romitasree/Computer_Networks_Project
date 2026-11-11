@@ -1,3 +1,5 @@
+"""Check how the chunk client handles real TCP replies and framing errors."""
+
 import socketserver
 import threading
 import unittest
@@ -12,6 +14,7 @@ class Server(socketserver.ThreadingTCPServer):
 
 class TransportTests(unittest.TestCase):
     def server(self, responder):
+        """Listen on a free local port and send replies controlled by the test."""
         class Handler(socketserver.StreamRequestHandler):
             def handle(self):
                 responder(self.rfile.readline(512), self.request)

@@ -2,7 +2,7 @@
 
 ## Ownership and files
 
-Vikas owns `peer_download/`, its downloader tests, and this guide. Python 3.9+
+Person 3 owns `peer_download/`, its downloader tests, and this guide. Python 3.9+
 and the standard library are sufficient on Linux/macOS. `fcntl.flock` prevents
 two processes with the same peer cache from downloading the same file.
 
@@ -14,11 +14,12 @@ two processes with the same peer cache from downloading the same file.
 | `peer_download/__main__.py` | Download one cached tracker or resume the peer's cache |
 | `examples/download_config.json` | All downloader tuning values and storage paths |
 
-Person 1 implements tracker serving/storage. Person 2 implements peer sockets
-and upload serving. Person 4 implements tracker protocol/configuration and
-verifies tracker response data before handing it to the downloader. Person 5
-wires the modules together and owns the full timed demo script. The test
-servers here are fixtures, not the production uploader or tracker server.
+Person 1 implements the tracker server and storage. Person 2 implements peer
+sockets and upload serving. Person 4 supplies the tracker message formats and
+configuration readers. The integrated peer's tracker client handles TCP,
+verifies responses, and caches tracker bodies. Person 5 wires the modules
+together and owns the full timed demo script. The local test uploaders are
+fixtures for exercising the downloader over TCP.
 
 ## Byte ranges and peer choice
 
@@ -37,52 +38,58 @@ concurrent work across different sources. Requests stop at the selected peer's
 advertised end. A failed peer is excluded for that chunk until other candidates
 have been tried. Retries are bounded by `attempts_per_chunk`.
 
+Workers return complete segments as byte strings. The coordinating thread
+alone writes to the partial file, saves checkpoints, and calls the tracker
+adapter. That lets workers fetch concurrently without racing to change a
+shared file position or marking a partially written segment complete.
+
 ## Team integration API
 
 Call `download()` immediately after receiving and verifying a tracker file.
 It blocks until completion, cancellation, or a recoverable error, and returns
 the final `Path`. Run it on the peer's download coordinator thread so that the
 peer can continue accepting uploads and user commands. Each downloader owns
-its worker pool; Person 2's `fetch_chunk` must be safe to call concurrently.
+its worker pool. The default chunk client matches the team's Python uploader;
+any replacement client must be safe to call concurrently.
+
+Use the `TrackerClient` and `PeerUploader` from the team's Python peer code.
+`TrackerClient.get_tracker()` verifies the MD5 against the exact `GET` body
+bytes, parses the metadata, and atomically caches the body. The MD5 inside
+that body describes the shared file and is checked separately after download.
 
 ```python
-from pathlib import Path
 from peer_download import DownloadConfig, Downloader, FileInfo
 
-# parsed_tracker is supplied by Person 4. Its fields are filename, filesize,
-# md5 and peers; each peer has ip, port, start_byte, end_byte and timestamp.
-info = FileInfo.from_tracker(parsed_tracker)
-
-def refresh(filename):
-    # Person 4 must issue GET <filename>.track, verify the tracker payload
-    # checksum, atomically replace the cached raw .track file, and parse it.
-    return FileInfo.from_tracker(tracker_client.get_tracker(filename))
-
-def report(filename, start, end):
-    # Person 4 adds this peer's automatically detected IP/listening port and
-    # sends the exact assignment updatetracker command; raise on failure.
-    tracker_client.update_tracker(filename, start, end)
-
-downloader = Downloader(
-    info,
-    shared_dir=Path(peer_settings.shared_dir),
-    cache_dir=Path(peer_settings.cache_dir),
-    config=DownloadConfig(refresh_interval=peer_settings.update_interval),
-    fetch_chunk=peer_network.fetch_chunk,
-    refresh_tracker=refresh,
-    report_segment=report,
-)
-path = downloader.download()
+def download_file(filename, uploader):
+    """Download on a peer with an already running PeerUploader."""
+    tracker_client = uploader.tracker
+    info = FileInfo.from_tracker(tracker_client.get_tracker(filename))
+    downloader = Downloader(
+        info,
+        shared_dir=uploader.shared_dir,
+        cache_dir=tracker_client.cache_dir,
+        config=DownloadConfig(refresh_interval=uploader.refresh_seconds),
+        refresh_tracker=uploader.refresh_tracker,
+        report_segment=uploader.report_segment,
+    )
+    uploader.attach_downloader(downloader)
+    path = downloader.download()
+    uploader.heartbeat_once()
+    return path
 ```
 
-`tracker_client`, `peer_network`, and `peer_settings` above are integration
-interfaces to be supplied by teammates, not modules included in this branch.
+Start the uploader before invoking this example, and leave it running while
+the peer is online. The uploader supplies its IP and listening port for
+tracker updates and recomputes the contiguous completed range from byte zero.
+This matters because the tracker stores one range per peer: reporting each
+segment separately would overwrite the earlier range. The uploader heartbeat
+also keeps complete downloads advertised after `download()` returns.
 
 | Callback | Contract |
 | --- | --- |
 | `fetch_chunk(peer, filename, start, end) -> bytes` | Worker thread; return exactly `end-start` bytes or raise `OSError`. Enforce a timeout. |
 | `refresh_tracker(filename) -> FileInfo` | Coordinator thread; return verified current metadata. File identity must remain the same. |
-| `report_segment(filename, start, end) -> None` | Coordinator thread; update tracker only after the segment is durably recorded. Raise on failure. |
+| `report_segment(filename, start, end) -> None` | Coordinator thread; called after a segment is durably recorded. Aggregate the completed prefix before updating a tracker that stores one range per peer. Raise on failure. |
 
 Completed segments are reported on restoration, after each segment, and at the
 refresh interval while the file is incomplete. Failed reports are logged and
@@ -101,8 +108,7 @@ returns. The tracker server owns dead-peer expiry.
 
 The assignment specifies the tracker messages but leaves successful
 peer-to-peer chunk framing unspecified. The bundled `TCPChunkClient` uses this
-explicit, replaceable contract; Person 2 must implement it or inject a client
-using the team's chosen format:
+contract, which the team's Python uploader implements:
 
 ```text
 request: <GET filename start end>\n
@@ -138,12 +144,11 @@ segment size rejects an old checkpoint rather than silently mixing versions.
 An invalid JSON checkpoint reports a clear error; preserve it for diagnosis
 or move it aside to explicitly start a fresh record.
 
-Person 2 should consult `downloader.completed_ranges()` before serving an
-incomplete file from `downloader.part_path`. Do not infer availability from
-the sparse file's size. Keep a downloader reference per active file, and stop
-new requests during the final rename; retry from the final path if the rename
-occurs between opening checks. Completed segments can be shared while later
-segments download, as required by the demo.
+The uploader consults `downloader.completed_ranges()` before serving an
+incomplete file from `downloader.part_path`. Availability comes from the
+checkpoint ranges rather than the sparse file's size. The uploader can retry
+from the final path if the atomic rename happens before opening the partial
+file. Completed segments can be shared while later segments download.
 
 When MD5 succeeds, the partial file is atomically renamed to its final path,
 and only that file's `.track` and JSON record are removed. An already existing
@@ -173,17 +178,42 @@ both tracker callbacks and apply its `clientThreadConfig.cfg` update interval
 to `DownloadConfig.refresh_interval`. Person 4 retains ownership of the
 assignment's peer configuration files.
 
-## Compatibility notes from lohita
+The [example JSON](../examples/download_config.json) shows the standalone
+downloader settings:
 
-`FileInfo.from_tracker` accepts the field layout in `lohita`'s
-`tracker_format.py`. At the inspected commit
-`f6b479c9fdc0263a6c3c7d2bb85661212033dbcf`, that branch still needs its own fixes:
-`TrackerFile.init` is not `__init__`, `parse_file` consequently lacks an
-initialized peer list, query handlers call `TrackerFile.parse` instead of
-`parse_file`, and writing calls `peer.to_string()` although only `__str__`
-exists. Its tracker GET trailer uses the shared file MD5 where the assignment
-requires verification of the received tracker data. These are documented
-integration findings; Lohita's files are not modified in this branch.
+| Setting | What it controls |
+| --- | --- |
+| `shared_dir`, `cache_dir` | Separate directories for file data and resume/tracker metadata. Use distinct directories for each peer. |
+| `segment_size`, `chunk_size` | Bytes saved per checkpoint and the maximum bytes per request. `chunk_size` cannot exceed 1024. |
+| `workers` | Maximum segments fetched concurrently for one file. |
+| `attempts_per_chunk`, `socket_timeout` | Attempts per chunk and the reference transport's socket timeout in seconds. |
+| `refresh_interval`, `max_stalled_refreshes` | Seconds between tracker callbacks and the limit on refresh intervals with no completed segments. Live refresh requires the tracker callback; the standalone CLI uses its cached snapshot. |
+
+## Midterm demo checklist
+
+1. On machine A, start the team's tracker and uploader. Seed a file larger
+   than one configured segment (64 KiB by default), and register it using
+   the uploader's reachable LAN address and listening port.
+2. On machine B, point the peer at the tracker on machine A and use a fresh
+   download directory. Start the download through the integrated peer. For a
+   downloader-only check, the standalone CLI can use a verified `.track`
+   snapshot as long as it names the real uploader on machine A.
+3. Capture both machines' terminal output: uploader address and served byte
+   ranges on A; source address, requested ranges, and `MD5 verified` on B.
+   Compare the final file's size and checksum with the seed. Include the
+   worker count and segment size used; add `%(threadName)s` to the integrated
+   peer's logging format if showing multiple workers in the demo logs.
+4. For a separate, repeatable check of concurrent workers, run:
+
+   ```sh
+   python3 -m unittest discover -s tests -p 'test_downloader.py' \
+     -k workers_use_distinct_peers_concurrently -v
+   ```
+
+   This test uses a barrier to require two workers to enter the fetch
+   callback together. The local TCP tests also download from two simulated
+   uploaders. The report should include separate evidence from the actual
+   two-machine transfer.
 
 ## Validation and sources
 
@@ -192,5 +222,5 @@ includes different partial peers, concurrent workers, short final chunks,
 newest-peer fallback, interruption/resume, modified local bytes, checksum
 failure, refresh/update callbacks, malformed responses, timeout, and the CLI.
 `make check` checks package syntax. No third-party code or packages are used.
-The local assignment PDF is the behavioral source, and Lohita's existing
-object layout is the compatibility reference.
+The assignment PDF defines the required behavior. The tracker client and
+peer uploader are the integration references.

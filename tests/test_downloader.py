@@ -1,3 +1,5 @@
+"""Exercise scheduling and disk recovery with controllable in-memory peers."""
+
 import hashlib
 import json
 import logging
@@ -27,6 +29,7 @@ class DownloadTests(unittest.TestCase):
         self.calls = []
 
     def fetch(self, peer, filename, start, end):
+        """Serve fixture bytes and record the requested source and offsets."""
         self.calls.append((peer.port, start, end))
         return self.data[start:end]
 
@@ -66,6 +69,8 @@ class DownloadTests(unittest.TestCase):
     def test_workers_use_distinct_peers_concurrently(self):
         info = FileInfo(self.info.filename, self.info.filesize, self.info.md5,
                         (self.peer, Peer("127.0.0.1", 3002, 0, len(self.data), 101)))
+        # Both workers must be fetching at once to reach this barrier. This
+        # distinguishes concurrent work from a serial download using two peers.
         barrier = threading.Barrier(2)
         lock = threading.Lock()
         first = []
@@ -255,7 +260,7 @@ class DownloadTests(unittest.TestCase):
 
 
 class MetadataTests(unittest.TestCase):
-    def test_lohita_object_adapter(self):
+    def test_tracker_file_object_adapter(self):
         peer = SimpleNamespace(ip="127.0.0.1", port="3000", start_byte=0, end_byte=10, timestamp=100)
         tracker = SimpleNamespace(filename="file.bin", filesize=10, md5="A" * 32, peers=[peer])
         info = FileInfo.from_tracker(tracker)

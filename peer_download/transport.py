@@ -26,6 +26,7 @@ class TCPChunkClient:
         self.timeout = timeout
 
     def __call__(self, peer: Peer, filename: str, start: int, end: int) -> bytes:
+        """Fetch exactly end - start bytes; raise ChunkError on a failed reply."""
         safe_filename(filename)
         length = end - start
         if start < 0 or not 1 <= length <= MAX_CHUNK_SIZE:
@@ -36,6 +37,8 @@ class TCPChunkClient:
             with socket.create_connection(peer.endpoint, timeout=self.timeout) as sock:
                 sock.settimeout(self.timeout)
                 sock.sendall(f"<GET {filename} {start} {end}>\n".encode("utf-8"))
+                # Read only through the header newline: the next byte may
+                # already be binary payload from the same TCP packet.
                 header = bytearray()
                 while len(header) < 128 and not header.endswith(b"\n"):
                     byte = sock.recv(1)
