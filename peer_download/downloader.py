@@ -227,15 +227,17 @@ class Downloader:
 
     def _choose_peer(self, position: int, excluded: set) -> Optional[Peer]:
         """Reserve one source for the requested offset; the worker releases it."""
-        # Prefer the newest peer that is not already busy. This lets concurrent
-        # workers use distinct peers where possible without waiting on a seed.
         with self._lock:
             candidates = [p for p in self.info.peers if p.start_byte <= position < p.end_byte
                           and p.endpoint not in excluded]
             if not candidates:
                 return None
-            peer = min(candidates, key=lambda p: (self._active_peers.get(p.endpoint, 0),
-                                                  -p.timestamp, p.ip, p.port))
+            # Freshness comes first. Spread requests across equally fresh
+            # sources when possible; concurrent requests may share a peer.
+            peer = min(
+                candidates,
+                key=lambda p: (-p.timestamp, self._active_peers.get(p.endpoint, 0), p.ip, p.port),
+            )
             self._active_peers[peer.endpoint] = self._active_peers.get(peer.endpoint, 0) + 1
             return peer
 

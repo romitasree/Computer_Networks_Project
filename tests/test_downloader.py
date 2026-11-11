@@ -66,9 +66,9 @@ class DownloadTests(unittest.TestCase):
         self.downloader(info, fetch, config=DownloadConfig(segment_size=2048, workers=1)).download()
         self.assertEqual(calls[:2], [3002, 3001])
 
-    def test_workers_use_distinct_peers_concurrently(self):
+    def first_concurrent_requests(self, other_timestamp):
         info = FileInfo(self.info.filename, self.info.filesize, self.info.md5,
-                        (self.peer, Peer("127.0.0.1", 3002, 0, len(self.data), 101)))
+                        (self.peer, Peer("127.0.0.1", 3002, 0, len(self.data), other_timestamp)))
         # Both workers must be fetching at once to reach this barrier. This
         # distinguishes concurrent work from a serial download using two peers.
         barrier = threading.Barrier(2)
@@ -77,14 +77,23 @@ class DownloadTests(unittest.TestCase):
 
         def fetch(peer, filename, start, end):
             with lock:
-                first.append(peer.port)
+                first.append((peer.port, start, end))
                 synchronize = len(first) <= 2
             if synchronize:
                 barrier.wait(timeout=3)
             return self.data[start:end]
 
-        self.downloader(info, fetch).download()
-        self.assertEqual(set(first[:2]), {3001, 3002})
+        self.assertEqual(self.downloader(info, fetch).download().read_bytes(), self.data)
+        return first[:2]
+
+    def test_newest_peer_is_preferred_even_with_an_active_request(self):
+        requests = self.first_concurrent_requests(other_timestamp=101)
+        self.assertEqual([port for port, _, _ in requests], [3002, 3002])
+        self.assertEqual({(start, end) for _, start, end in requests}, {(0, 1024), (2048, 3072)})
+
+    def test_workers_use_distinct_peers_concurrently(self):
+        requests = self.first_concurrent_requests(other_timestamp=self.peer.timestamp)
+        self.assertEqual({port for port, _, _ in requests}, {3001, 3002})
 
     def test_chunks_split_at_partial_peer_boundaries(self):
         info = FileInfo(self.info.filename, self.info.filesize, self.info.md5,

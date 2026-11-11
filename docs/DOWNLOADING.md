@@ -33,10 +33,12 @@ multiple peers' advertised ranges. A short last chunk/segment is supported.
 Segments are submitted in increasing order to a bounded worker pool; workers
 can finish out of order. Their ranges never overlap. For each next chunk,
 eligible peers must actually advertise its start byte. The newest timestamp
-wins among equally busy eligible peers; workers prefer idle peers to spread
-concurrent work across different sources. Requests stop at the selected peer's
-advertised end. A failed peer is excluded for that chunk until other candidates
-have been tried. Retries are bounded by `attempts_per_chunk`.
+wins even if that peer is already serving another request. Among peers with
+the same timestamp, prefer the one with fewer active requests. Workers may
+therefore fetch different byte ranges concurrently from the same source.
+Requests stop at the selected peer's advertised end. A failed peer is excluded
+for that chunk until other candidates have been tried. Retries are bounded by
+`attempts_per_chunk`.
 
 Workers return complete segments as byte strings. The coordinating thread
 alone writes to the partial file, saves checkpoints, and calls the tracker
@@ -194,8 +196,10 @@ downloader settings:
 1. On machine A, start the team's tracker and uploader. Seed a file larger
    than one configured segment (64 KiB by default), and register it using
    the uploader's reachable LAN address and listening port.
-2. On machine B, point the peer at the tracker on machine A and use a fresh
-   download directory. Start the download through the integrated peer. For a
+2. On machine B, put machine A's reachable tracker address and port in
+   `clientThreadConfig.cfg` and the receiver's listening port and shared
+   directory in `serverThreadConfig.cfg`. Use a fresh download directory and
+   start the download through the integrated peer. For a
    downloader-only check, the standalone CLI can use a verified `.track`
    snapshot as long as it names the real uploader on machine A.
 3. Capture both machines' terminal output: uploader address and served byte
@@ -210,16 +214,16 @@ downloader settings:
      -k workers_use_distinct_peers_concurrently -v
    ```
 
-   This test uses a barrier to require two workers to enter the fetch
-   callback together. The local TCP tests also download from two simulated
-   uploaders. The report should include separate evidence from the actual
-   two-machine transfer.
+   This test uses a barrier to require two workers to fetch simultaneously
+   from peers with the same timestamp. The local TCP tests also download
+   from two simulated uploaders. The report should include separate evidence
+   from the actual two-machine transfer.
 
 ## Validation and sources
 
 `make test` runs unit tests plus localhost TCP integration tests. Coverage
 includes different partial peers, concurrent workers, short final chunks,
-newest-peer fallback, interruption/resume, modified local bytes, checksum
+newest-peer priority and fallback, interruption/resume, modified local bytes, checksum
 failure, refresh/update callbacks, malformed responses, timeout, and the CLI.
 `make check` checks package syntax. No third-party code or packages are used.
 The assignment PDF defines the required behavior. The tracker client and
